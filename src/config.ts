@@ -11,7 +11,7 @@ export const CONFIG = {
     ellipsoid: new Vector3(0.4, 0.9, 0.4), // «капсула» коллизий игрока
     gravity: 9.8,
   },
-  level: { tile: 2, wallHeight: 4, roofHeight: 8, wallThickness: 0.4, halfX: 10, halfZ: 8 },
+  level: { tile: 2, wallHeight: 4, roofHeight: 4, wallThickness: 0.4, halfX: 10, halfZ: 8 },
   elevator: {
     cabinSize: 5, cabinHeight: 3, doorWidth: 2.4, floorHeight: 5,
     floors: [-1, 0, 1, 2, 3, 4], startFloor: 0,

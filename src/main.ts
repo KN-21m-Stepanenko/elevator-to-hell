@@ -44,7 +44,7 @@ scene.onBeforeRenderObservable.add(() => {
   weapon.update(dt);
   player.update(dt);
   const key = player.locked ? elevator.pickKey() : null;
-  hud.setHint(key === null ? null : key === "stop" ? "E — аварийная остановка" : `E — этаж ${key}`);
+  hud.setHint(key === null ? null : key === "stop" ? "E — аварійна зупинка" : `E — поверх ${key}`);
 });
 engine.runRenderLoop(() => scene.render());
 window.addEventListener("resize", () => engine.resize());

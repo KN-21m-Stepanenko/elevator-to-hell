@@ -107,14 +107,14 @@ export class CabinPanel {
     c.font = 'bold 46px "Courier New", monospace';
     c.fillText(floorText, 50, 68);
     c.font = 'bold 14px "Courier New", monospace';
-    c.fillText("ЭТАЖ", 50, 86);
+    c.fillText("Поверх", 50, 86);
 
     // Вес
     c.fillStyle = col;
     c.font = 'bold 40px "Courier New", monospace';
     c.fillText(`${weight} КГ`, 175, 54);
     c.font = 'bold 18px "Courier New", monospace';
-    c.fillText(alarm ? (flashOn ? "ПЕРЕГРУЗ!" : "") : `ЛИМИТ ${limit} КГ`, 175, 82);
+    c.fillText(alarm ? (flashOn ? "Перевантаження!" : "") : `ЛІМІТ ${limit} КГ`, 175, 82);
     this.bTex.update();
   }
 }

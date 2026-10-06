@@ -90,7 +90,7 @@ export class Elevator {
         if (this.door.isClosed && (!here || here.isClosed)) {
           if (this.weight > E.weightLimit) {
             this.state = "OVERLOADED";
-            this.say(`Перегруз! Лифт не поедет, пока вес больше ${E.weightLimit} кг`);
+            this.say(`Перевантаження! Ліфт не поїде, поки вага більше ${E.weightLimit} кг`);
           } else this.state = "MOVING";
         }
         break;
