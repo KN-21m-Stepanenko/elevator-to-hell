@@ -7,7 +7,9 @@ export class Player {
   readonly camera: FreeCamera;
   locked = false;
   onLockChange: (locked: boolean) => void = () => {};
-  onInteract: () => void = () => {}; // клавиша E
+  onInteract: () => void = () => {};      // клавиша E
+  onToggleWeapon: () => void = () => {};  // клавиша Q
+  onFire: () => void = () => {};          // ЛКМ
 
   private yaw: number;
   private pitch = 0;
@@ -32,10 +34,14 @@ export class Player {
 
     window.addEventListener("keydown", (e) => {
       this.keys.add(e.code);
-      if (e.code === "KeyE" && !e.repeat && this.locked) this.onInteract();
+      if (!e.repeat && this.locked) {
+        if (e.code === "KeyE") this.onInteract();
+        if (e.code === "KeyQ") this.onToggleWeapon();
+      }
     });
     window.addEventListener("keyup", (e) => this.keys.delete(e.code));
     window.addEventListener("blur", () => this.keys.clear());
+    document.addEventListener("mousedown", (e) => { if (this.locked && e.button === 0) this.onFire(); });
     document.addEventListener("mousemove", (e) => {
       if (!this.locked) return;
       this.yaw += e.movementX * P.mouseSensitivity;
@@ -54,6 +60,12 @@ export class Player {
     } catch {
       /* браузер может отклонить повторный запрос сразу после Esc */
     }
+  }
+
+  /** Сдвиг вертикального угла камеры (отдача). */
+  addPitch(d: number) {
+    const m = CONFIG.player.maxPitch;
+    this.pitch = Math.max(-m, Math.min(m, this.pitch + d));
   }
 
   /** Луч из глаз по направлению взгляда (мировые координаты). */

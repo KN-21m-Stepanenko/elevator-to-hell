@@ -12,6 +12,7 @@ export class Elevator {
   state: ElevatorState = "IDLE";
   floor = CONFIG.elevator.startFloor;
   weight = 0;
+  onArrived: (floor: number) => void = () => {}; // для этапов 4–5 (спавн монстров и т.д.)
   private selected: number | null = null;
   private panel: CabinPanel;
   private time = 0;
@@ -25,6 +26,14 @@ export class Elevator {
     this.root = cabin.root;
     this.door = cabin.door;
     this.panel = new CabinPanel(scene, cabin.root);
+  }
+
+  get moving() { return this.state === "MOVING"; }
+
+  /** Двери кабины и шахты на текущем этаже открыты — можно выбежать. */
+  exitOpen(): boolean {
+    const l = this.landing.get(this.floor);
+    return this.door.open > 0.7 && !!l && l.open > 0.7;
   }
 
   /** Игрок внутри кабины (вес игрока учитывается только тогда). */
@@ -95,7 +104,12 @@ export class Elevator {
         if (this.door.isOpen && (!here || here.isOpen)) this.state = "IDLE";
         break;
     }
-    this.panel.setBoard(this.weight, E.weightLimit, this.state === "OVERLOADED", Math.floor(this.time * 2.5) % 2 === 0);
+
+    // Табло: при движении показываем этаж, мимо которого проезжает кабина.
+    const travelling = this.state === "MOVING" && this.selected !== null;
+    const shown = travelling ? Math.round(this.root.position.y / E.floorHeight) : this.floor;
+    const dir = travelling ? Math.sign(this.selected! * E.floorHeight - this.root.position.y) : 0;
+    this.panel.setBoard(this.weight, E.weightLimit, this.state === "OVERLOADED", Math.floor(this.time * 2.5) % 2 === 0, String(shown), dir);
   }
 
   private move(dt: number) {
@@ -122,6 +136,7 @@ export class Elevator {
         this.state = "IDLE"; // этаж -1: двери остаются закрытыми
         this.say(`Этаж ${this.floor}: лава появится на этапе 5`);
       }
+      this.onArrived(this.floor);
     }
   }
 }

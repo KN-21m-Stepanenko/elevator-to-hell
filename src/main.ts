@@ -2,8 +2,9 @@ import { Color3, Color4, Engine, Scene } from "@babylonjs/core";
 import { CONFIG } from "./config";
 import { Elevator } from "./elevator/Elevator";
 import { buildWorld } from "./levels/World";
-import { spawnNpcs } from "./npc/Npc";
+import { NpcEnv, spawnNpcs } from "./npc/Npc";
 import { Player } from "./player/Player";
+import { Weapon } from "./player/Weapon";
 import { Hud } from "./ui/Hud";
 
 const canvas = document.getElementById("game") as HTMLCanvasElement;
@@ -20,12 +21,17 @@ scene.fogColor = new Color3(0.03, 0.03, 0.04);
 const world = buildWorld(scene);
 const npcs = spawnNpcs(scene, world.cabin.root);
 const player = new Player(scene, canvas, world.spawn, world.spawnYaw);
+const weapon = new Weapon(scene, player);
 const hud = new Hud();
 const elevator = new Elevator(scene, world.cabin, world.landing, player, npcs, (t) => hud.toast(t));
+const env: NpcEnv = { cabin: world.cabin.root, scene, player, weapon, elevator, npcs };
+npcs.forEach((n) => (n.env = env));
 
 hud.setPaused(true);
 hud.onStart(() => player.requestLock());
 player.onLockChange = (locked) => hud.setPaused(!locked);
+player.onToggleWeapon = () => weapon.toggle();
+player.onFire = () => weapon.fire();
 player.onInteract = () => {
   const key = elevator.pickKey();
   if (key !== null) elevator.press(key);
@@ -33,7 +39,9 @@ player.onInteract = () => {
 
 scene.onBeforeRenderObservable.add(() => {
   const dt = Math.min(engine.getDeltaTime() / 1000, 0.05);
-  elevator.update(dt); // лифт двигаем до игрока, чтобы игрок ехал вместе с кабиной
+  elevator.update(dt); // лифт двигаем до игрока и NPC, чтобы они ехали вместе с кабиной
+  npcs.forEach((n) => n.update(dt));
+  weapon.update(dt);
   player.update(dt);
   const key = player.locked ? elevator.pickKey() : null;
   hud.setHint(key === null ? null : key === "stop" ? "E — аварийная остановка" : `E — этаж ${key}`);

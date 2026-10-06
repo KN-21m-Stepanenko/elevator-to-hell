@@ -1,34 +1,211 @@
-import { Color3, MeshBuilder, Scene, StandardMaterial, TransformNode } from "@babylonjs/core";
+import { Color3, Mesh, MeshBuilder, Ray, Scene, StandardMaterial, TransformNode, Vector3 } from "@babylonjs/core";
 import { CONFIG } from "../config";
+import type { Elevator } from "../elevator/Elevator";
+import type { Player } from "../player/Player";
+import type { Weapon } from "../player/Weapon";
 
 const rnd = (a: number, b: number) => Math.floor(a + Math.random() * (b - a + 1));
+const rf = (a: number, b: number) => a + Math.random() * (b - a);
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+const RED = new Color3(0.6, 0.05, 0.05), BLACK = Color3.Black();
+// Точки убегания в свободной полосе перед лифтом (x, z).
+const FLEE_POINTS = [[-1, 5], [1, 3], [-1, 1], [1, -1], [-1, -3], [1, -5], [0, -6.5]];
 
-/** Пассажир. На этапе 2 — только модель и вес; поведение (паника) добавится на этапе 3. */
+export interface NpcEnv { cabin: TransformNode; scene: Scene; player: Player; weapon: Weapon; elevator: Elevator; npcs: Npc[] }
+export type NpcState = "CALM" | "PANIC" | "DEAD";
+
+/** Пассажир. Автомат состояний: CALM → PANIC → DEAD. */
 export class Npc {
+  state: NpcState = "CALM";
   alive = true;
   inCabin = true;
+  env!: NpcEnv;
   readonly root: TransformNode;
+  private hp = CONFIG.npc.hp;
+  private locked = false; // паника от событий (лава, обрыв тросов, монстры) не снимается
+  private mats: StandardMaterial[] = [];
+  private parts: Mesh[] = [];
+  private flash = 0;
+  private flashOn = false;
+  private fall = 0;
+  private lookT = rf(0.5, 2);
+  private lookYaw: number;
+  private los = false;
+  private losT = Math.random() * 0.25;
+  private calmT = 0;
+  private retarget = 0;
+  private tl = { x: 0, z: -2.1 }; // цель метаний внутри кабины (локально)
+  private tw = { x: 0, z: 0 };    // цель убегания снаружи (мировая)
 
   constructor(scene: Scene, parent: TransformNode, readonly weight: number, pos: number[], yaw: number, color: Color3) {
     this.root = new TransformNode("npc", scene);
     this.root.parent = parent;
     this.root.position.set(pos[0], 0, pos[1]);
     this.root.rotation.y = yaw;
+    this.lookYaw = yaw;
     const k = 0.85 + ((weight - 60) / 40) * 0.3; // полнее — шире
     this.root.scaling.set(k, 1, k);
 
-    const mat = (c: Color3) => {
+    const part = (n: string, w: number, h: number, d: number, p: number[], c: Color3, collide: boolean) => {
       const m = new StandardMaterial("npc_mat", scene);
-      m.diffuseColor = c; m.specularColor = Color3.Black();
-      return m;
-    };
-    const part = (n: string, w: number, h: number, d: number, y: number, c: Color3, collide: boolean) => {
+      m.diffuseColor = c; m.specularColor = BLACK;
       const b = MeshBuilder.CreateBox(n, { width: w, height: h, depth: d }, scene);
-      b.parent = this.root; b.position.y = y; b.material = mat(c); b.checkCollisions = collide;
+      b.parent = this.root; b.position.set(p[0], p[1], p[2]); b.material = m; b.checkCollisions = collide;
+      b.metadata = { npc: this };
+      this.mats.push(m); this.parts.push(b);
     };
-    part("npc_legs", 0.4, 0.8, 0.28, 0.4, new Color3(0.12, 0.12, 0.16), true);
-    part("npc_torso", 0.5, 0.6, 0.3, 1.1, color, true);
-    part("npc_head", 0.26, 0.28, 0.26, 1.54, new Color3(0.75, 0.58, 0.45), false);
+    part("npc_legs", 0.4, 0.8, 0.28, [0, 0.4, 0], new Color3(0.12, 0.12, 0.16), true);
+    part("npc_torso", 0.5, 0.6, 0.3, [0, 1.1, 0], color, true);
+    part("npc_head", 0.26, 0.28, 0.26, [0, 1.54, 0], new Color3(0.75, 0.58, 0.45), false);
+    part("npc_visor", 0.2, 0.06, 0.03, [0, 1.58, 0.14], new Color3(0.05, 0.05, 0.08), false); // «лицо» — спереди (+z)
+  }
+
+  /** Паника от событий (лава, обрыв тросов, монстры): ничем не снимается. */
+  scare() { if (this.alive) { this.locked = true; this.state = "PANIC"; } }
+
+  damage(d: number) {
+    if (!this.alive) return;
+    this.hp -= d;
+    this.flash = 0.15;
+    if (this.hp <= 0) {
+      this.alive = false; this.state = "DEAD";
+      this.parts.forEach((p) => (p.checkCollisions = false));
+      this.root.position.y += 0.16; // лежит на полу, а не в нём
+      this.setFlash(false);
+    }
+  }
+
+  /** Мировые координаты в плоскости пола. */
+  world() {
+    const p = this.root.position, c = this.root.parent ? this.env.cabin.position : null;
+    return { x: p.x + (c ? c.x : 0), z: p.z + (c ? c.z : 0) };
+  }
+
+  update(dt: number) {
+    if (this.state === "DEAD") {
+      this.fall = Math.min(1, this.fall + dt / 0.35);
+      this.root.rotation.x = this.fall * (Math.PI / 2);
+      return;
+    }
+    this.flash = Math.max(0, this.flash - dt);
+    this.setFlash(this.flash > 0);
+
+    this.losT -= dt;
+    if (this.losT <= 0) { this.losT = 0.25; this.los = this.checkLos(); }
+
+    // Видит оружие — паника; в движущейся кабине успокаиваются; убрал оружие — успокаиваются.
+    const threat = this.env.weapon.drawn && this.los;
+    const scared = this.locked || (threat && !(this.inCabin && this.env.elevator.moving));
+    if (scared) { this.calmT = 0; this.state = "PANIC"; }
+    else if (this.state === "PANIC") { this.calmT += dt; if (this.calmT > 1) this.state = "CALM"; }
+
+    if (this.state === "PANIC") this.runAround(dt); else this.idle(dt);
+    this.separate();
+    this.constrain();
+  }
+
+  private setFlash(on: boolean) {
+    if (on === this.flashOn) return;
+    this.flashOn = on;
+    this.mats.forEach((m) => (m.emissiveColor = on ? RED : BLACK));
+  }
+
+  private idle(dt: number) {
+    this.lookT -= dt;
+    if (this.lookT <= 0) { this.lookT = rf(1.5, 3.5); this.lookYaw = this.root.rotation.y + rf(-1.8, 1.8); }
+    this.faceTo(this.lookYaw, dt, 2.5);
+  }
+
+  private runAround(dt: number) {
+    const env = this.env, cab = env.cabin.position, sp = CONFIG.npc.runSpeed, w = this.world();
+    if (this.inCabin) {
+      if (env.elevator.exitOpen()) {
+        // К выходу: сначала на ось двери, затем наружу.
+        const wide = w.z - cab.z > -2.0 && Math.abs(w.x - cab.x) > 0.8;
+        this.step(cab.x, wide ? cab.z - 1.6 : cab.z - 5, sp, dt);
+      } else {
+        // Двери закрыты: мечутся по кабине и бьются в двери.
+        this.retarget -= dt;
+        const d = Math.hypot(cab.x + this.tl.x - w.x, cab.z + this.tl.z - w.z);
+        if (this.retarget <= 0 || d < 0.3) {
+          this.retarget = rf(0.8, 1.6);
+          this.tl = Math.random() < 0.55 ? { x: rf(-0.8, 0.8), z: -2.15 } : { x: rf(-2, 2), z: rf(-1.5, 2) };
+        }
+        this.step(cab.x + this.tl.x, cab.z + this.tl.z, sp, dt);
+      }
+    } else {
+      // Снаружи: убегаем от игрока по свободной полосе.
+      this.retarget -= dt;
+      if (this.retarget <= 0) {
+        this.retarget = 1;
+        const pp = env.player.body.position;
+        let best = FLEE_POINTS[0], bd = -1;
+        for (const q of FLEE_POINTS) { const d = Math.hypot(q[0] - pp.x, q[1] - pp.z); if (d > bd) { bd = d; best = q; } }
+        this.tw = { x: best[0], z: best[1] };
+      }
+      this.step(this.tw.x, this.tw.z, sp, dt);
+    }
+  }
+
+  private step(tx: number, tz: number, speed: number, dt: number) {
+    const w = this.world(), dx = tx - w.x, dz = tz - w.z, d = Math.hypot(dx, dz);
+    if (d < 0.05) return;
+    const s = Math.min(speed * dt, d);
+    this.setWorld(w.x + (dx / d) * s, w.z + (dz / d) * s);
+    this.faceTo(Math.atan2(dx, dz), dt, 10);
+  }
+
+  private setWorld(x: number, z: number) {
+    const c = this.root.parent ? this.env.cabin.position : null;
+    this.root.position.x = x - (c ? c.x : 0);
+    this.root.position.z = z - (c ? c.z : 0);
+  }
+
+  private faceTo(yaw: number, dt: number, rate: number) {
+    let d = yaw - this.root.rotation.y;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    this.root.rotation.y += d * Math.min(1, rate * dt);
+  }
+
+  /** Не даём NPC слипаться друг с другом и с игроком. */
+  private separate() {
+    const me = this.world();
+    let x = me.x, z = me.z;
+    const push = (ox: number, oz: number, r: number) => {
+      const dx = x - ox, dz = z - oz, d = Math.hypot(dx, dz);
+      if (d < r && d > 1e-4) { x += (dx / d) * (r - d) * 0.5; z += (dz / d) * (r - d) * 0.5; }
+    };
+    for (const o of this.env.npcs) if (o !== this && o.alive) { const q = o.world(); push(q.x, q.z, 0.6); }
+    const pp = this.env.player.body.position;
+    push(pp.x, pp.z, 0.8);
+    this.setWorld(x, z);
+  }
+
+  /** Границы кабины/комнаты; при пересечении порога NPC покидает кабину. */
+  private constrain() {
+    const p = this.root.position;
+    if (this.root.parent === this.env.cabin) {
+      const exit = this.env.elevator.exitOpen() && Math.abs(p.x) < 1.0;
+      p.x = clamp(p.x, -2.2, 2.2);
+      p.z = clamp(p.z, exit ? -9 : -2.2, 2.2);
+      if (p.z < -2.45) { this.root.setParent(null); this.inCabin = false; }
+    } else {
+      p.x = clamp(p.x, -9.3, 9.3);
+      p.z = clamp(p.z, -7.5, 7.5);
+    }
+  }
+
+  /** Прямая видимость до глаз игрока (стены и закрытые двери перекрывают). */
+  private checkLos(): boolean {
+    const env = this.env, w = this.world();
+    const y = (this.root.parent ? env.cabin.position.y : this.root.position.y) + 1.5;
+    const head = new Vector3(w.x, y, w.z);
+    const dir = env.player.getEyeRay(1).origin.subtract(head);
+    const dist = dir.length();
+    if (dist > CONFIG.npc.sightRange) return false;
+    dir.normalize();
+    const hit = env.scene.pickWithRay(new Ray(head, dir, dist - 0.1), (m) => m.checkCollisions && !m.metadata?.npc);
+    return !hit?.hit;
   }
 }
 

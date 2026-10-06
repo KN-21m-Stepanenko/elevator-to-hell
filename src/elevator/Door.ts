@@ -15,6 +15,7 @@ export class Door {
     }
   }
 
+  get meshes() { return this.panels; }
   setOpen(v: boolean) { this.target = v ? 1 : 0; }
   setInstant(v: boolean) { this.open = this.target = v ? 1 : 0; this.place(); }
   get isClosed() { return this.open <= 0.001; }

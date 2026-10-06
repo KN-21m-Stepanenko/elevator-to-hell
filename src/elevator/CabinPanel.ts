@@ -82,19 +82,39 @@ export class CabinPanel {
     for (const k of this.btn.keys()) if (k !== "stop") this.drawButton(k, k === sel);
   }
 
-  /** Табло: зелёное при ≤ лимита, красное при перегрузе; alarm — мигающая надпись после нажатия этажа. */
-  setBoard(weight: number, limit: number, alarm: boolean, flashOn: boolean) {
-    const key = `${weight}|${alarm}|${alarm && flashOn}`;
+  /**
+   * Табло: слева текущий этаж и стрелка движения, справа вес.
+   * Вес зелёный при ≤ лимита, красный при перегрузе; alarm — мигающая надпись после нажатия этажа.
+   */
+  setBoard(weight: number, limit: number, alarm: boolean, flashOn: boolean, floorText: string, dir: number) {
+    const key = `${weight}|${alarm}|${alarm && flashOn}|${floorText}|${dir}`;
     if (key === this.bKey) return;
     this.bKey = key;
-    const c = this.bCtx, col = weight > limit ? "#ff3b2a" : "#3dff5e";
+    const c = this.bCtx, col = weight > limit ? "#ff3b2a" : "#3dff5e", fl = "#ffb830";
     c.fillStyle = "#050805"; c.fillRect(0, 0, 256, 96);
     c.strokeStyle = col; c.lineWidth = 3; c.strokeRect(2, 2, 252, 92);
-    c.fillStyle = col; c.textAlign = "center"; c.textBaseline = "alphabetic";
-    c.font = 'bold 44px "Courier New", monospace';
-    c.fillText(`${weight} КГ`, 128, 54);
-    c.font = 'bold 20px "Courier New", monospace';
-    c.fillText(alarm ? (flashOn ? "ПЕРЕГРУЗ!" : "") : `ЛИМИТ ${limit} КГ`, 128, 82);
+    c.fillRect(0, 0, 0, 0);
+    c.fillStyle = col; c.fillRect(92, 8, 2, 80); // разделитель
+
+    // Этаж и стрелка
+    c.fillStyle = fl;
+    if (dir !== 0) {
+      c.beginPath();
+      if (dir > 0) { c.moveTo(50, 8); c.lineTo(38, 24); c.lineTo(62, 24); } else { c.moveTo(50, 24); c.lineTo(38, 8); c.lineTo(62, 8); }
+      c.closePath(); c.fill();
+    }
+    c.textAlign = "center"; c.textBaseline = "alphabetic";
+    c.font = 'bold 46px "Courier New", monospace';
+    c.fillText(floorText, 50, 68);
+    c.font = 'bold 14px "Courier New", monospace';
+    c.fillText("ЭТАЖ", 50, 86);
+
+    // Вес
+    c.fillStyle = col;
+    c.font = 'bold 40px "Courier New", monospace';
+    c.fillText(`${weight} КГ`, 175, 54);
+    c.font = 'bold 18px "Courier New", monospace';
+    c.fillText(alarm ? (flashOn ? "ПЕРЕГРУЗ!" : "") : `ЛИМИТ ${limit} КГ`, 175, 82);
     this.bTex.update();
   }
 }
